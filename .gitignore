@@ -1,0 +1,16 @@
+# Environments
+myenv/
+env/
+venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+build/
+.pio/
+*.bin
+*.elf

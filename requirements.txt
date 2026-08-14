@@ -1,0 +1,6 @@
+customtkinter
+requests
+pycryptodome
+pandas
+gspread
+oauth2client
