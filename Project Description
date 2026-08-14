@@ -1,0 +1,200 @@
+# Smart Biometric Attendance System Using ESP32 and R307S Optical Fingerprint Sensor with Encrypted Wireless Communication
+
+---
+
+## 1. Abstract
+
+This project presents the design and implementation of a **Smart Biometric Attendance System** that leverages an ESP32 microcontroller interfaced with an R307S optical fingerprint sensor to automate attendance tracking in educational and corporate environments. The system employs **AES-128 encryption** for secure wireless data transmission between the embedded hardware unit and a Windows companion application developed in Python (CustomTkinter). Features include automated device discovery via **UDP broadcast**, real-time attendance monitoring, user enrollment management, and cloud synchronization through **Google Sheets API**. Visual and auditory feedback via WS2812B addressable LEDs and a piezoelectric buzzer enhance user interaction. The solution is packaged as a standalone executable for seamless deployment.
+
+---
+
+## 2. Problem Statement
+
+Traditional attendance systems — manual roll calls, RFID cards, and barcode scanning — are susceptible to **proxy attendance, human error, time inefficiency, and data manipulation**. Cards and codes can be shared or forged. Commercial biometric systems are expensive, lack customization, and require proprietary software.
+
+There is a need for an **affordable, tamper-proof, automated attendance system** that:
+- Uses fingerprint biometrics to eliminate proxy attendance
+- Ensures data security through AES encryption during wireless transmission
+- Provides real-time monitoring and cloud-based record keeping
+- Supports zero-configuration device discovery on local networks
+- Can be deployed without complex infrastructure
+
+---
+
+## 3. Objectives
+
+### 3.1 Primary Objectives
+1. Design and fabricate a biometric attendance terminal using ESP32-WROOM-32 and R307S optical fingerprint sensor.
+2. Develop embedded C++ firmware to manage fingerprint enrollment, identification, and secure data transmission over Wi-Fi.
+3. Implement AES-128 symmetric encryption using ESP-IDF mbedTLS library for payload protection.
+4. Develop a Windows desktop companion application in Python with a graphical dashboard for real-time monitoring and user management.
+5. Implement automated device discovery using UDP broadcast protocol for zero-configuration networking.
+
+### 3.2 Secondary Objectives
+1. Integrate Google Sheets API (via `gspread`) for cloud-based attendance logging.
+2. Provide visual feedback (WS2812B NeoPixel LED) and auditory feedback (buzzer) for interaction states.
+3. Package the companion app as a standalone Windows .exe using PyInstaller.
+4. Implement Wi-Fi TX power management to prevent voltage brownouts on USB power.
+5. Design architecture for future scalability (multiple devices, database integration, analytics).
+
+---
+
+## 4. Scope
+
+### 4.1 In Scope
+| Area | Details |
+|------|---------|
+| **Hardware** | ESP32 + R307S + WS2812B LED + Buzzer circuit design and integration |
+| **Firmware** | C++ firmware: fingerprint ops, Wi-Fi, HTTP server, UDP discovery, AES encryption |
+| **Desktop App** | Python GUI: live feed, enrollment panel, local database (Pandas), Google Sheets sync |
+| **Security** | AES-128 encryption for all data payloads |
+| **Deployment** | PyInstaller packaging for standalone .exe |
+| **Testing** | Unit testing, integration testing, power stability testing |
+
+### 4.2 Out of Scope
+- Mobile application development (Android/iOS)
+- Multi-factor authentication (face + fingerprint)
+- WAN/Internet-based remote device access
+- Battery/solar-powered operation
+- Custom PCB fabrication (prototype uses breadboard)
+
+---
+
+## 5. Hardware Specifications
+
+### 5.1 Bill of Materials
+
+| S.No | Component | Specification | Qty | Purpose |
+|------|-----------|---------------|-----|---------|
+| 1 | ESP32-WROOM-32 DevKit | Dual-core 240MHz, 520KB SRAM, Wi-Fi | 1 | Main controller |
+| 2 | R307S Fingerprint Sensor | UART, 500dpi, 127 templates, FAR<0.001% | 1 | Biometric input |
+| 3 | WS2812B NeoPixel LED | Addressable RGB, 5V | 1 | Visual feedback |
+| 4 | Piezoelectric Buzzer | Active, 3.3V/5V | 1 | Auditory feedback |
+| 5 | Breadboard | 830 tie-point | 1 | Prototyping |
+| 6 | Jumper Wires | M-M, M-F assorted | Set | Interconnections |
+| 7 | USB Cable | Micro-USB / Type-C | 1 | Power + Programming |
+
+### 5.2 Pin Mapping
+
+| ESP32 GPIO | Connected To | Function |
+|------------|-------------|----------|
+| GPIO 16 (RX2) | R307S TX (Green) | UART2 Receive |
+| GPIO 17 (TX2) | R307S RX (White) | UART2 Transmit |
+| GPIO 18 | WS2812B Data In | NeoPixel control |
+| GPIO 19 | Buzzer (+) | PWM tone generation |
+| 3.3V | R307S VCC | Sensor power |
+| GND | Common GND | Common ground |
+
+---
+
+## 6. Software Specifications
+
+### 6.1 Firmware Stack (ESP32)
+
+| Category | Technology |
+|----------|------------|
+| Framework | Arduino Core for ESP32 / PlatformIO |
+| Language | C++ (C++11) |
+| Fingerprint Library | Adafruit Fingerprint Sensor Library |
+| HTTP Server | ESP32 WebServer (built-in) |
+| Encryption | mbedTLS (built into ESP-IDF) |
+| LED Control | Adafruit NeoPixel Library |
+
+### 6.2 Desktop Application Stack (Python)
+
+| Category | Technology |
+|----------|------------|
+| GUI Framework | CustomTkinter ≥ 5.2.0 |
+| HTTP Client | Requests ≥ 2.28.0 |
+| Encryption | PyCryptodome ≥ 3.18.0 |
+| Data Management | Pandas ≥ 2.0.0 |
+| Cloud Sync | gspread ≥ 5.10.0 |
+| Packaging | PyInstaller ≥ 5.13.0 |
+
+---
+
+## 7. System Architecture
+
+```
+  ┌─────────────────────┐       Wi-Fi (LAN)       ┌──────────────┐
+  │   ATTENDANCE UNIT   │◄───────────────────────►│  WINDOWS PC  │
+  │  ESP32 + R307S      │  UDP Discovery (8888)    │  Python App  │
+  │  + LED + Buzzer     │  HTTP API (Port 80)      │  (CustomTk)  │
+  └─────────────────────┘  AES-128 Encrypted JSON  └──────┬───────┘
+                                                          │
+                                                   Google Sheets API
+                                                          │
+                                                   ┌──────▼───────┐
+                                                   │ Google Cloud │
+                                                   │   Sheets     │
+                                                   └──────────────┘
+```
+
+---
+
+## 8. Communication Protocol Design
+
+### 8.1 Device Discovery (UDP)
+- App broadcasts `FIND_ATTENDANCE_DEVICE` on UDP port 8888
+- ESP32 replies with IP address and device identifier
+- Enables zero-configuration networking
+
+### 8.2 Data Exchange (HTTP + AES)
+- `GET /poll` — Returns latest attendance event (AES encrypted)
+- `POST /enroll?id=<N>` — Initiates fingerprint enrollment
+- Payload: JSON → AES-128 Encrypt → Base64 Encode → HTTP Body
+
+---
+
+## 9. Expected Outcomes
+
+1. Functional biometric terminal enrolling up to 127 fingerprints with <1s identification
+2. Windows desktop app with real-time monitoring and cloud sync
+3. AES-128 encrypted communication ensuring data integrity
+4. Zero-configuration device discovery via UDP
+5. Cloud-based attendance records via Google Sheets
+6. Standalone deployable .exe requiring no Python installation
+
+---
+
+## 10. Applications
+
+- **Educational Institutions:** Student attendance in classrooms and labs
+- **Corporate Offices:** Employee check-in/check-out tracking
+- **Research Labs:** Access logging for restricted areas
+- **Small Businesses:** Affordable attendance automation
+- **Events:** Participant tracking at conferences
+
+---
+
+## 11. Project Timeline
+
+| Week | Phase | Activities |
+|------|-------|------------|
+| 1–2 | Phase 1 | Component procurement, circuit assembly, hardware diagnostics |
+| 3–4 | Phase 2 | ESP32 firmware — Wi-Fi, HTTP server, UDP, AES encryption |
+| 5–6 | Phase 3 | Python app — GUI, device discovery, background polling |
+| 7–8 | Phase 4 | AES decryption, Pandas data management, Google Sheets sync |
+| 9–10 | Phase 5 | Integration testing, power optimization, PyInstaller packaging |
+| 11–12 | Docs | Final report, presentation, demonstration |
+
+---
+
+## 12. References
+
+1. Espressif Systems, "ESP32 Technical Reference Manual," 2023.
+2. R307S Fingerprint Module Datasheet, Hangzhou Grow Technology Co., Ltd.
+3. Adafruit Industries, "Adafruit Fingerprint Sensor Library Documentation."
+4. Google Cloud, "Google Sheets API v4 Documentation."
+5. CustomTkinter Documentation, Tom Schimansky.
+6. NIST SP 800-76-2, "Biometric Specifications for Personal Identity Verification," 2013.
+7. mbedTLS Documentation, ARM Ltd.
+
+---
+
+**Prepared by:** [Student Name]  
+**Registration No.:** [Registration Number]  
+**Department:** [Department Name]  
+**Institution:** [Institution Name]  
+**Guide:** [Faculty Guide Name]  
+**Date:** August 2026
