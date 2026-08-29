@@ -4,7 +4,7 @@
 
 ## 1. Abstract
 
-This project presents the design and implementation of a **Smart Biometric Attendance System** that leverages an ESP32 microcontroller interfaced with an R307S optical fingerprint sensor to automate attendance tracking in educational and corporate environments. The system employs **AES-128 encryption** for secure wireless data transmission between the embedded hardware unit and a Windows companion application developed in Python (CustomTkinter). Features include automated device discovery via **UDP broadcast**, real-time attendance monitoring, user enrollment management, and cloud synchronization through **Google Sheets API**. Visual and auditory feedback via WS2812B addressable LEDs and a piezoelectric buzzer enhance user interaction. The solution is packaged as a standalone executable for seamless deployment.
+This project presents the design and implementation of a **Smart Biometric Attendance System** that leverages an ESP32 microcontroller interfaced with an R307S optical fingerprint sensor to automate attendance tracking in enterprise environments. The system employs **AES-128 encryption** for secure wireless data transmission between the embedded hardware unit and a Windows companion application developed in Python (CustomTkinter). Features include automated device discovery via **UDP broadcast**, real-time attendance monitoring, user enrollment management, and cloud synchronization through **Google Sheets API**. To guarantee 100% data integrity during Wi-Fi outages, the system utilizes a **DS3231 Real-Time Clock (RTC)** and a **MicroSD Card module** to accurately timestamp and securely cache offline scans. Visual and auditory feedback via WS2812B addressable LEDs and a piezoelectric buzzer enhance user interaction. The solution is packaged as a standalone executable for seamless enterprise deployment.
 
 ---
 
@@ -26,9 +26,10 @@ There is a need for an **affordable, tamper-proof, automated attendance system**
 ### 3.1 Primary Objectives
 1. Design and fabricate a biometric attendance terminal using ESP32-WROOM-32 and R307S optical fingerprint sensor.
 2. Develop embedded C++ firmware to manage fingerprint enrollment, identification, and secure data transmission over Wi-Fi.
-3. Implement AES-128 symmetric encryption using ESP-IDF mbedTLS library for payload protection.
-4. Develop a Windows desktop companion application in Python with a graphical dashboard for real-time monitoring and user management.
-5. Implement automated device discovery using UDP broadcast protocol for zero-configuration networking.
+3. Integrate a DS3231 RTC and MicroSD Card module for robust offline data caching and accurate timestamping during network outages.
+4. Implement AES-128 symmetric encryption using ESP-IDF mbedTLS library for payload protection.
+5. Develop a Windows desktop companion application in Python with a graphical dashboard for real-time monitoring and user management.
+6. Implement automated device discovery using UDP broadcast protocol for zero-configuration networking.
 
 ### 3.2 Secondary Objectives
 1. Integrate Google Sheets API (via `gspread`) for cloud-based attendance logging.
@@ -44,8 +45,8 @@ There is a need for an **affordable, tamper-proof, automated attendance system**
 ### 4.1 In Scope
 | Area | Details |
 |------|---------|
-| **Hardware** | ESP32 + R307S + WS2812B LED + Buzzer circuit design and integration |
-| **Firmware** | C++ firmware: fingerprint ops, Wi-Fi, HTTP server, UDP discovery, AES encryption |
+| **Hardware** | ESP32 + R307S + WS2812B LED + Buzzer + DS3231 RTC + SD Card module circuit design |
+| **Firmware** | C++ firmware: fingerprint ops, offline SD queuing, RTC timekeeping, Wi-Fi, HTTP server, UDP discovery, AES encryption |
 | **Desktop App** | Python GUI: live feed, enrollment panel, local database (Pandas), Google Sheets sync |
 | **Security** | AES-128 encryption for all data payloads |
 | **Deployment** | PyInstaller packaging for standalone .exe |
@@ -68,8 +69,10 @@ There is a need for an **affordable, tamper-proof, automated attendance system**
 |------|-----------|---------------|-----|---------|
 | 1 | ESP32-WROOM-32 DevKit | Dual-core 240MHz, 520KB SRAM, Wi-Fi | 1 | Main controller |
 | 2 | R307S Fingerprint Sensor | UART, 500dpi, 127 templates, FAR<0.001% | 1 | Biometric input |
-| 3 | WS2812B NeoPixel LED | Addressable RGB, 5V | 1 | Visual feedback |
+| 3 | WS2812B NeoPixel LED | Addressable RGB, 5V (8-LED Ring/Strip) | 1 | Visual feedback |
 | 4 | Piezoelectric Buzzer | Active, 3.3V/5V | 1 | Auditory feedback |
+| 5 | DS3231 RTC Module | I2C Precision Real-Time Clock | 1 | Offline Timestamping |
+| 6 | MicroSD Card Module | SPI Interface | 1 | Offline Data Storage |
 | 5 | Breadboard | 830 tie-point | 1 | Prototyping |
 | 6 | Jumper Wires | M-M, M-F assorted | Set | Interconnections |
 | 7 | USB Cable | Micro-USB / Type-C | 1 | Power + Programming |
@@ -82,7 +85,13 @@ There is a need for an **affordable, tamper-proof, automated attendance system**
 | GPIO 17 (TX2) | R307S RX (White) | UART2 Transmit |
 | GPIO 18 | WS2812B Data In | NeoPixel control |
 | GPIO 19 | Buzzer (+) | PWM tone generation |
-| 3.3V | R307S VCC | Sensor power |
+| GPIO 21 (SDA) | DS3231 SDA | I2C Data (RTC) |
+| GPIO 22 (SCL) | DS3231 SCL | I2C Clock (RTC) |
+| GPIO 13 (MOSI)| SD Card MOSI | HSPI Data Out (Storage) |
+| GPIO 12 (MISO)| SD Card MISO | HSPI Data In (Storage) |
+| GPIO 14 (SCK) | SD Card SCK | HSPI Clock (Storage) |
+| GPIO 15 (CS)  | SD Card CS | HSPI Chip Select (Storage) |
+| 3.3V / 5V | VCC for all modules | Power supply |
 | GND | Common GND | Common ground |
 
 ---
@@ -159,11 +168,10 @@ There is a need for an **affordable, tamper-proof, automated attendance system**
 
 ## 10. Applications
 
-- **Educational Institutions:** Student attendance in classrooms and labs
 - **Corporate Offices:** Employee check-in/check-out tracking
-- **Research Labs:** Access logging for restricted areas
+- **Enterprise Facilities:** Access logging for restricted areas
 - **Small Businesses:** Affordable attendance automation
-- **Events:** Participant tracking at conferences
+- **Events:** Participant tracking at corporate conferences
 
 ---
 
@@ -192,9 +200,6 @@ There is a need for an **affordable, tamper-proof, automated attendance system**
 
 ---
 
-**Prepared by:** [Student Name]  
-**Registration No.:** [Registration Number]  
-**Department:** [Department Name]  
-**Institution:** [Institution Name]  
-**Guide:** [Faculty Guide Name]  
+**Prepared by:** BioSync Engineering Team  
+**Organization:** BioSync Startup  
 **Date:** August 2026
