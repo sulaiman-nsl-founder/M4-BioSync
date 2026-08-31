@@ -1,5 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include <Adafruit_Fingerprint.h>
 #include <Adafruit_NeoPixel.h>
 #include <WiFiUdp.h>
@@ -53,9 +55,11 @@ String lastScannedTimestamp = "";
 bool isEnrolling = false;
 int enrollStep = 0;
 int targetID = 0;
+unsigned long lastPollTime = 0;
 
 // Cooldown tracking (assumes max 255 IDs)
 unsigned long lastPunchMillis[256] = {0};
+bool isCheckedIn[256] = {false}; // Track check-in vs check-out state for LEDs
 const unsigned long COOLDOWN_MS = 5000; // 5 seconds (Reduced for testing)
 
 String encryptPayload(String jsonStr) {
@@ -93,24 +97,50 @@ String encryptPayload(String jsonStr) {
 }
 
 void logOfflineScan(int id) {
-  if (!sdReady || !rtcReady) {
-    Serial.println("Cannot log offline: SD or RTC not ready");
+  if (!sdReady) {
+    Serial.println("Cannot log offline: SD not ready");
     return;
   }
-  DateTime now = rtc.now();
-  String timestamp = String(now.year()) + "-" + String(now.month()) + "-" + String(now.day()) + "T" + 
-                     String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second());
+  
+  String timestamp;
+  if (rtcReady) {
+    DateTime now = rtc.now();
+    timestamp = String(now.year()) + "-" + String(now.month()) + "-" + String(now.day()) + "T" + 
+                String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second());
+  } else {
+    // Fallback: use uptime in seconds if RTC not available
+    unsigned long uptime = millis() / 1000;
+    timestamp = "uptime_" + String(uptime) + "s";
+    Serial.println("WARNING: RTC not ready, using uptime timestamp.");
+  }
   
   String json = "{\"id\":" + String(id) + ",\"confidence\":98,\"timestamp\":\"" + timestamp + "\"}";
   String encrypted = encryptPayload(json);
   
-  File file = SD.open("/offline_queue.txt", FILE_APPEND);
-  if(file){
+  File file = SD.open("/queue.csv", FILE_APPEND);
+  if (!file) {
+    Serial.println("SD write failed! Attempting hardware auto-recovery...");
+    // Auto-recover the SD Card SPI bus in case Wi-Fi corrupted it
+    SD.end();
+    spiHSPI.end();
+    digitalWrite(SD_CS, HIGH);
+    delay(500); // 500ms allows the SD card internal controller to fully power-cycle
+    
+    spiHSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    if (SD.begin(SD_CS, spiHSPI)) {
+      file = SD.open("/queue.csv", FILE_APPEND);
+      if (!file) {
+        file = SD.open("/queue.csv", FILE_WRITE); // Fallback to write if append unsupported
+      }
+    }
+  }
+  
+  if (file) {
     file.println(encrypted);
     file.close();
-    Serial.println("Saved offline scan to SD: " + timestamp);
+    Serial.println("Saved punch to SD card offline queue.");
   } else {
-    Serial.println("Failed to open SD file for appending");
+    Serial.println("CRITICAL: Failed to open SD file even after auto-recovery");
   }
 }
 
@@ -128,10 +158,15 @@ void playBeep(int durationMs, int freq = 2000) {
 }
 
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector
   Serial.begin(115200);
+  delay(2000); // Wait for serial monitor to connect
+  
   pinMode(BUZZER_PIN, OUTPUT);
   pixels.begin();
   setLED(255, 165, 0); // Orange = Booting
+  
+  Serial.println("\n--- BioSync ESP32 Booting ---");
 
   // 0. INITIALIZE RTC & SD CARD
   Wire.begin(21, 22);
@@ -145,14 +180,47 @@ void setup() {
     }
   }
 
-  spiHSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-  if(!SD.begin(SD_CS, spiHSPI)) {
-    Serial.println("Card Mount Failed");
-  } else {
-    sdReady = true;
-    Serial.println("SD Card mounted successfully");
+  // SD Card Init with retry loop (handles warm boot SPI bus issues)
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+  delay(100);
+  
+  for (int sdAttempt = 1; sdAttempt <= 5; sdAttempt++) {
+    spiHSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    if (SD.begin(SD_CS, spiHSPI)) {
+      sdReady = true;
+      Serial.println("SD Card mounted successfully (attempt " + String(sdAttempt) + ")");
+      
+      // Perform a quick write test to guarantee file system is writable
+      File testWrite = SD.open("/testlog.txt", FILE_WRITE);
+      if (testWrite) {
+        testWrite.println("SD Write Test OK");
+        testWrite.close();
+        Serial.println("SD Write Test: SUCCESS");
+      } else {
+        Serial.println("SD Write Test: FAILED TO OPEN FILE");
+      }
+      break;
+    } else {
+      Serial.println("SD Card mount failed, attempt " + String(sdAttempt) + "/5...");
+      SD.end();
+      spiHSPI.end(); // CRITICAL: Tear down the SPI bus before calling begin() on the next loop
+      digitalWrite(SD_CS, HIGH);
+      delay(500); 
+    }
   }
-
+  
+  if (!sdReady) {
+    Serial.println("CRITICAL ERROR: SD Card unavailable! Halting system to prevent data loss.");
+    // Blink LED red forever and halt execution
+    while (true) {
+      setLED(255, 0, 0);
+      delay(500);
+      setLED(0, 0, 0);
+      delay(500);
+    }
+  }
+  
   // 1. WI-FI PROVISIONING & STARTUP
   preferences.begin("wifi", false);
   // Use the global variables as default fallbacks
@@ -164,7 +232,7 @@ void setup() {
     isAPMode = true;
   } else {
     WiFi.mode(WIFI_STA);
-    WiFi.setTxPower(WIFI_POWER_8_5dBm); // Lowers power spike
+    WiFi.setTxPower(WIFI_POWER_8_5dBm); // CRITICAL: Prevents 500mA spike that browns out SD card
     WiFi.setAutoReconnect(true);
     WiFi.begin(ssid.c_str(), password.c_str());
     
@@ -178,20 +246,16 @@ void setup() {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.println("\nConnected! ESP32 IP Address: " + WiFi.localIP().toString());
     } else {
-      Serial.println("\nConnection failed! Starting AP mode...");
+      Serial.println("\nConnection failed! Starting AP fallback while continuing to search...");
+      // Use AP_STA so it hosts the setup portal BUT the watchdog keeps scanning!
+      WiFi.mode(WIFI_AP_STA); 
+      WiFi.softAP("BioSync_Setup", "12345678");
+      Serial.println("AP Mode Started: Connect to 'BioSync_Setup' (Password: 12345678)");
+      Serial.println("ESP32 IP Address: " + WiFi.softAPIP().toString());
       isAPMode = true;
     }
   }
 
-  if (isAPMode) {
-    WiFi.mode(WIFI_AP);
-    // Secure the AP mode with a password
-    WiFi.softAP("BioSync_Setup", "12345678");
-    Serial.println("AP Mode Started: Connect to 'BioSync_Setup' (Password: 12345678)");
-    Serial.println("ESP32 IP Address: 192.168.4.1");
-    setLED(0, 0, 255); // Blue = AP Setup Mode
-  }
-  
   // 1.5 OTA ENDPOINT (Server Pull)
   server.on("/update_firmware", HTTP_GET, []() {
     if (server.hasArg("url")) {
@@ -229,6 +293,12 @@ void setup() {
   finger.begin(57600);
   if (finger.verifyPassword()) {
     Serial.println("Fingerprint sensor found!");
+    
+    // CRITICAL CLONE FIX: Some generic R307S sensors report a broken "capacity" of 0 or 1.
+    // This physically prevents the fingerSearch() function from looking past ID 1!
+    // We force the capacity to 1000 to guarantee it searches the entire flash database.
+    finger.capacity = 1000; 
+    
     setLED(0, 255, 0); // Green = Ready
     playBeep(200);
     delay(1000);
@@ -246,8 +316,6 @@ void setup() {
 
   // 4. API ENDPOINTS FOR PYTHON APP
   server.on("/status", HTTP_GET, []() {
-    finger.getTemplateCount();
-    Serial.println("Received /status request from Python App");
     String json = "{\"status\":\"" + currentStatus + "\",";
     json += "\"last_id\":" + String(lastScannedID) + ",";
     json += "\"enrolled\":" + String(finger.templateCount) + ",";
@@ -264,7 +332,7 @@ void setup() {
   });
 
   server.on("/poll", HTTP_GET, []() {
-    Serial.println("Received /poll request from Python App");
+    lastPollTime = millis();
     String json;
     if (lastScannedID != -1) {
       json = "{\"id\":" + String(lastScannedID) + ",\"confidence\":98,\"timestamp\":\"" + lastScannedTimestamp + "\"}";
@@ -281,11 +349,19 @@ void setup() {
       server.send(500, "text/plain", "SD Card not initialized");
       return;
     }
-    if (SD.exists("/offline_queue.txt")) {
-      File file = SD.open("/offline_queue.txt", FILE_READ);
-      server.streamFile(file, "text/plain");
-      file.close();
-      SD.remove("/offline_queue.txt");
+    File file = SD.open("/queue.csv");
+    if (!file) {
+      server.send(200, "text/plain", ""); // No offline data
+      return;
+    }
+    String data = "";
+    while (file.available()) {
+      data += (char)file.read();
+    }
+    file.close();
+    if (data.length() > 0) {
+      server.send(200, "text/plain", data);
+      SD.remove("/queue.csv");
     } else {
       server.send(200, "text/plain", ""); // No offline data
     }
@@ -307,6 +383,33 @@ void setup() {
     }
   });
 
+  server.on("/clear_sensor", HTTP_GET, []() {
+    finger.emptyDatabase();
+    server.send(200, "text/plain", "Sensor memory completely wiped.");
+    Serial.println("[API] Sensor database wiped by user!");
+  });
+
+  server.on("/sync_time", HTTP_GET, []() {
+    if (server.hasArg("y") && server.hasArg("m") && server.hasArg("d") && server.hasArg("h") && server.hasArg("min") && server.hasArg("s")) {
+      if (rtcReady) {
+        rtc.adjust(DateTime(
+          server.arg("y").toInt(),
+          server.arg("m").toInt(),
+          server.arg("d").toInt(),
+          server.arg("h").toInt(),
+          server.arg("min").toInt(),
+          server.arg("s").toInt()
+        ));
+        server.send(200, "text/plain", "RTC time synchronized with PC!");
+        Serial.println("[API] RTC time synchronized!");
+      } else {
+        server.send(500, "text/plain", "RTC not ready");
+      }
+    } else {
+      server.send(400, "text/plain", "Missing time arguments");
+    }
+  });
+
   server.on("/set_wifi", HTTP_GET, []() {
     if (server.hasArg("ssid") && server.hasArg("pass")) {
       preferences.putString("ssid", server.arg("ssid"));
@@ -319,17 +422,50 @@ void setup() {
     }
   });
 
+  server.on("/delete_finger", HTTP_GET, []() {
+    if (server.hasArg("id")) {
+      int id = server.arg("id").toInt();
+      if (finger.deleteModel(id) == FINGERPRINT_OK) {
+        server.send(200, "text/plain", "Finger deleted successfully.");
+        Serial.println("[API] Deleted finger ID: " + String(id));
+      } else {
+        server.send(500, "text/plain", "Failed to delete finger from sensor memory.");
+        Serial.println("[API] Failed to delete finger ID: " + String(id));
+      }
+    } else {
+      server.send(400, "text/plain", "Missing ID parameter");
+    }
+  });
+
   server.begin();
 }
 
 void loop() {
   server.handleClient(); // Listen for Python requests
 
-  // If in AP Mode for setup, don't run the rest of the loop
-  if (isAPMode) {
-    delay(10);
-    return;
+  // Wi-Fi Auto-Reconnect Watchdog (Non-Blocking)
+  static unsigned long lastWifiCheck = millis();
+  if (ssid != "") { // Always try to reconnect if we have credentials, regardless of AP mode
+    if (WiFi.status() != WL_CONNECTED) {
+      if (millis() - lastWifiCheck > 15000) { // Try reconnecting every 15 seconds
+        Serial.println("Wi-Fi connection lost! Performing hardware-level Wi-Fi reset...");
+        WiFi.disconnect();
+        WiFi.mode(WIFI_OFF);
+        delay(50);
+        // If we were hosting the AP portal, keep hosting it while resetting STA
+        WiFi.mode(isAPMode ? WIFI_AP_STA : WIFI_STA);
+        WiFi.setTxPower(WIFI_POWER_8_5dBm);
+        WiFi.begin(ssid.c_str(), password.c_str());
+        lastWifiCheck = millis();
+      }
+    } else {
+      lastWifiCheck = millis(); // Keep timer reset while connected
+    }
   }
+
+  // If in AP Mode, the device acts as a standalone offline logger.
+  // The user can connect to the BioSync_Setup AP to configure Wi-Fi,
+  // but it will continue scanning fingers and logging to SD!
 
   // Handle UDP Discovery
   int packetSize = udp.parsePacket();
@@ -412,10 +548,16 @@ void loop() {
   } 
   // Handle Normal Scanning
   else {
-    if (finger.getImage() == FINGERPRINT_OK) {
-      if (finger.image2Tz() == FINGERPRINT_OK) {
-        if (finger.fingerSearch() == FINGERPRINT_OK) {
+    uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_OK) {
+      Serial.println("[SCAN] Image taken");
+      p = finger.image2Tz();
+      if (p == FINGERPRINT_OK) {
+        Serial.println("[SCAN] Image converted");
+        p = finger.fingerSearch();
+        if (p == FINGERPRINT_OK) {
           int scannedID = finger.fingerID;
+          Serial.println("[SCAN] Match found! ID: " + String(scannedID) + " Confidence: " + String(finger.confidence));
           
           // Duplicate Punch Cooldown Check
           if (scannedID < 256 && (millis() - lastPunchMillis[scannedID] < COOLDOWN_MS)) {
@@ -441,11 +583,21 @@ void loop() {
             lastScannedTimestamp = String(millis());
           }
           
-          setLED(0, 255, 0);
+          // Toggle hardware state for LED colors
+          isCheckedIn[scannedID] = !isCheckedIn[scannedID];
+          if (isCheckedIn[scannedID]) {
+            setLED(0, 255, 0); // Green for Check-In
+          } else {
+            setLED(0, 0, 255); // Blue for Check-Out
+          }
+          
           playBeep(100, 2500); delay(50); playBeep(100, 2500);
           
-          // Check Wi-Fi state for offline storage
-          if (WiFi.status() != WL_CONNECTED) {
+          unsigned long timeSinceLastPoll = millis() - lastPollTime;
+          Serial.println("Watchdog: Time since last Python poll = " + String(timeSinceLastPoll) + "ms");
+          
+          // 30s threshold: Python app worst-case cycle = 5s + 5s + 1s + overhead
+          if (timeSinceLastPoll > 30000) {
             logOfflineScan(lastScannedID);
             lastScannedID = -1; // Clear it so it isn't polled later
             currentStatus = "Offline: Saved to SD";
@@ -454,13 +606,27 @@ void loop() {
           delay(1000);
           setLED(0, 0, 0);
         } else {
+          Serial.println("[SCAN] fingerSearch failed with code: 0x" + String(p, HEX));
+          if (p == FINGERPRINT_NOTFOUND) {
+            Serial.println(" -> NOT FOUND (Fingerprint does not match any enrolled IDs)");
+          }
           currentStatus = "Unknown Finger";
           setLED(255, 0, 0);
           playBeep(500, 1000);
           delay(1000);
           setLED(0, 0, 0);
         }
+      } else {
+        Serial.println("[SCAN] image2Tz failed with code: 0x" + String(p, HEX));
+        if (p == FINGERPRINT_IMAGEMESS) {
+          Serial.println(" -> IMAGE MESS (Image too blurry or messy)");
+        } else if (p == FINGERPRINT_FEATUREFAIL) {
+          Serial.println(" -> FEATURE FAIL (Could not find fingerprint features)");
+        }
       }
+    } else if (p != FINGERPRINT_NOFINGER) {
+      // Ignore NOFINGER because that just means no one is touching it
+      Serial.println("[SCAN] getImage failed with code: 0x" + String(p, HEX));
     }
   }
 }

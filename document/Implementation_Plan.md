@@ -237,11 +237,16 @@ Build the complete employee profile database and a multi-step modal enrollment w
 ```
 
 ### 4.4 Acceptance Criteria
-- [ ] Enrollment wizard guides through all steps with live status updates
-- [ ] Employee record is created in `employees.csv` after successful enrollment
-- [ ] Edit and delete operations persist correctly across app restarts
-- [ ] Re-enrollment successfully replaces the old fingerprint template on R307S
-- [ ] Inactive employees do not receive attendance entries
+- [x] Enrollment wizard guides through all steps with live status updates
+- [x] Employee record is created in `employees.csv` after successful enrollment
+- [x] Edit and delete operations persist correctly across app restarts
+- [x] Re-enrollment successfully replaces the old fingerprint template on R307S
+- [x] Inactive employees do not receive attendance entries
+
+### 4.5 Developer Notes & Critical Bug Fixes (Phase 4)
+* **Windows Hotspot UDP Routing Bug:** Windows often fails to route `255.255.255.255` UDP broadcast packets to Mobile Hotspot adapters. **Fix:** `discovery.py` was rewritten to dynamically calculate and explicitly broadcast to all local subnets (e.g., `192.168.137.255`), guaranteeing auto-discovery on any network.
+* **ESP32 WebServer Blocking:** Using `delay()` on the ESP32 freezes the HTTP server, causing the Python app to miss critical status updates (like `"Success!"`). **Fix:** All blocking delays in the ESP32 firmware were replaced with non-blocking `millis()` loops that continuously call `server.handleClient()`.
+* **Pandas Type Coercion:** Pandas automatically inferred numeric `emp_id`s (like `1234`) as `int64`, which broke Python string comparisons during deletion and lookup. **Fix:** Forced `dtype={"emp_id": str}` in `load_employees()`.
 
 ---
 

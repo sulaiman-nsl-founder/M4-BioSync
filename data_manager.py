@@ -49,6 +49,46 @@ class DataManager:
         df = df[df["emp_id"] != emp_id]
         df.to_csv(self.file_path, index=False)
 
+    # --- PHASE 5: ATTENDANCE TRACKING ---
+    def get_attendance_file(self):
+        att_file = "attendance.csv"
+        if not os.path.exists(att_file):
+            df = pd.DataFrame(columns=["date", "time", "emp_id", "full_name", "department", "punch_type", "status", "confidence"])
+            df.to_csv(att_file, index=False)
+        return att_file
+
+    def load_attendance(self):
+        return pd.read_csv(self.get_attendance_file(), dtype={"emp_id": str})
+
+    def log_punch(self, emp_id, full_name, department, punch_type, status, confidence=98, override_datetime=None):
+        att_file = self.get_attendance_file()
+        df = self.load_attendance()
+        
+        if override_datetime:
+            # Expected format from ESP32: YYYY-MM-DD HH:MM:SS
+            parts = override_datetime.split(" ")
+            date_str = parts[0] if len(parts) > 0 else datetime.now().strftime("%Y-%m-%d")
+            time_str = parts[1] if len(parts) > 1 else datetime.now().strftime("%H:%M:%S")
+        else:
+            now = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M:%S")
+
+        new_row = {
+            "date": date_str,
+            "time": time_str,
+            "emp_id": emp_id,
+            "full_name": full_name,
+            "department": department,
+            "punch_type": punch_type,
+            "status": status,
+            "confidence": confidence
+        }
+        
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        df.to_csv(att_file, index=False)
+        return new_row
+
     def get_employee_by_finger_id(self, finger_id):
         df = self.load_employees()
         match = df[(df["finger_id"] == int(finger_id)) & (df["status"] == "Active")]

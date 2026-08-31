@@ -1,4 +1,5 @@
 import socket
+import time
 
 def get_broadcast_addresses():
     broadcasts = ["255.255.255.255"]
@@ -16,8 +17,9 @@ def get_broadcast_addresses():
     broadcasts.extend(["192.168.137.255", "192.168.4.255", "192.168.1.255", "192.168.0.255"])
     return list(set(broadcasts))
 
-def discover_device(timeout=3, retries=3):
+def discover_device(timeout=5, retries=3):
     broadcasts = get_broadcast_addresses()
+    print(f"[DEBUG] Broadcasting auto-discovery on: {broadcasts}")
     
     for attempt in range(retries):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -31,14 +33,30 @@ def discover_device(timeout=3, retries=3):
                     pass
                     
             # Listen for any response
-            data, addr = sock.recvfrom(1024)
-            response = data.decode('utf-8')
-            if response.startswith("ATTENDANCE_DEVICE"):
-                parts = response.split(":")
-                if len(parts) >= 2:
-                    return parts[1].strip()
-        except socket.timeout:
+            while True:
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    response = data.decode('utf-8')
+                    if response.startswith("ATTENDANCE_DEVICE"):
+                        parts = response.split(":")
+                        if len(parts) >= 2:
+                            ip = parts[1].strip()
+                            
+                            # Verify the HTTP server is actually alive
+                            import requests
+                            try:
+                                res = requests.get(f"http://{ip}/status", timeout=1)
+                                if res.status_code == 200:
+                                    print(f"[DEBUG] Auto-Discovery found active ESP32 at {ip}!")
+                                    return ip
+                            except Exception:
+                                print(f"[DEBUG] Found device at {ip} but HTTP failed. Ignoring...")
+                                continue
+                except socket.timeout:
+                    break # Stop listening for this attempt
             continue
         finally:
             sock.close()
+    
+    print("[ERROR] Auto-Discovery failed to find ESP32.")
     return None

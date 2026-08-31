@@ -10,7 +10,9 @@ from tkinter import filedialog, messagebox, ttk
 import http.server
 import socketserver
 import os
+from datetime import datetime
 from data_manager import DataManager
+from sheets_sync import SheetsSync
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -172,6 +174,7 @@ class AttendanceApp(ctk.CTk):
         
         # Initialize Data Manager
         self.db = DataManager()
+        self.cloud_sync = SheetsSync()
         
         # Start Auth Window (Blocks UI until success)
         self.auth_window = AuthWindow(self, self.on_auth_success)
@@ -314,6 +317,26 @@ class AttendanceApp(ctk.CTk):
         self.ip_entry = ctk.CTkEntry(ip_panel, placeholder_text="Device IP Address", width=250)
         self.ip_entry.pack(anchor="w", padx=20, pady=5)
         ctk.CTkButton(ip_panel, text="Connect to IP", command=self.manual_connect, width=200).pack(anchor="w", padx=20, pady=(10, 20))
+
+        # PIN Change Panel
+        pin_panel = ctk.CTkFrame(set_frame, corner_radius=10)
+        pin_panel.pack(fill="x", padx=20, pady=10)
+        
+        ctk.CTkLabel(pin_panel, text="Security Settings", font=("Arial", 16, "bold")).pack(anchor="w", padx=20, pady=(20, 5))
+        ctk.CTkLabel(pin_panel, text="Change the Admin PIN used to log into this software.").pack(anchor="w", padx=20, pady=(0, 15))
+        
+        self.new_pin_entry = ctk.CTkEntry(pin_panel, placeholder_text="Enter New PIN", show="*", width=250)
+        self.new_pin_entry.pack(anchor="w", padx=20, pady=5)
+        ctk.CTkButton(pin_panel, text="Change PIN", command=self.change_admin_pin, width=200).pack(anchor="w", padx=20, pady=(10, 20))
+
+        # Hardware Maintenance Panel
+        hw_panel = ctk.CTkFrame(set_frame, corner_radius=10)
+        hw_panel.pack(fill="x", padx=20, pady=10)
+        
+        ctk.CTkLabel(hw_panel, text="Hardware Maintenance", font=("Arial", 16, "bold"), text_color="orange").pack(anchor="w", padx=20, pady=(20, 5))
+        ctk.CTkLabel(hw_panel, text="Use this to permanently wipe the ESP32 sensor memory if you get duplicate finger IDs.").pack(anchor="w", padx=20, pady=(0, 15))
+        ctk.CTkButton(hw_panel, text="Format Fingerprint Sensor", fg_color="red", hover_color="#8B0000", command=self.format_sensor_memory, width=250).pack(anchor="w", padx=20, pady=(10, 20))
+
         
         # 3. EMPLOYEES FRAME
         emp_frame = ctk.CTkFrame(self.main_content, fg_color="transparent")
@@ -355,13 +378,56 @@ class AttendanceApp(ctk.CTk):
         ctk.CTkButton(emp_bot, text="🗑 Delete Selected", fg_color="red", hover_color="#8B0000", command=self.delete_employee).pack(side="right")
         
         self.load_employee_table()
+        # 4. ATTENDANCE LOG FRAME (Phase 5)
+        att_frame = ctk.CTkFrame(self.main_content, fg_color="transparent")
+        self.frames["Attendance"] = att_frame
         
-        # Placeholder frames for Phase 4 & 5
-        self.frames["Attendance"] = ctk.CTkFrame(self.main_content, fg_color="transparent")
-        ctk.CTkLabel(self.frames["Attendance"], text="Attendance Log (Coming in Phase 5)").pack(pady=50)
+        ctk.CTkLabel(att_frame, text="Real-Time Attendance Log", font=("Arial", 20, "bold")).pack(anchor="w", padx=20, pady=20)
         
-        self.frames["Reports"] = ctk.CTkFrame(self.main_content, fg_color="transparent")
-        ctk.CTkLabel(self.frames["Reports"], text="Reporting Engine (Coming in Phase 5)").pack(pady=50)
+        self.att_tree = ttk.Treeview(att_frame, columns=("Date", "Time", "Emp ID", "Name", "Dept", "Type", "Status", "Hours"), show="headings")
+        self.att_tree.heading("Date", text="Date")
+        self.att_tree.heading("Time", text="Time")
+        self.att_tree.heading("Emp ID", text="Emp ID")
+        self.att_tree.heading("Name", text="Full Name")
+        self.att_tree.heading("Dept", text="Department")
+        self.att_tree.heading("Type", text="Punch Type")
+        self.att_tree.heading("Status", text="Status")
+        self.att_tree.heading("Hours", text="Hours")
+        
+        self.att_tree.column("Date", width=100)
+        self.att_tree.column("Time", width=100)
+        self.att_tree.column("Emp ID", width=80)
+        self.att_tree.column("Name", width=150)
+        self.att_tree.column("Type", width=100)
+        self.att_tree.column("Hours", width=80)
+        self.att_tree.column("Status", width=100)
+        self.att_tree.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        
+        ctk.CTkButton(att_frame, text="🔄 Refresh Log", command=self.load_attendance_table).pack(anchor="e", padx=20, pady=10)
+        self.load_attendance_table()
+        
+        # 5. REPORTS & CLOUD FRAME (Phase 5)
+        rep_frame = ctk.CTkFrame(self.main_content, fg_color="transparent")
+        self.frames["Reports"] = rep_frame
+        
+        ctk.CTkLabel(rep_frame, text="Data Export & Cloud Sync", font=("Arial", 20, "bold")).pack(anchor="w", padx=20, pady=20)
+        
+        export_panel = ctk.CTkFrame(rep_frame, corner_radius=10)
+        export_panel.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(export_panel, text="Export Local Data", font=("Arial", 16, "bold")).pack(anchor="w", padx=20, pady=(20, 5))
+        ctk.CTkLabel(export_panel, text="Export the raw attendance logs to an Excel or CSV file for payroll processing.").pack(anchor="w", padx=20, pady=(0, 15))
+        ctk.CTkButton(export_panel, text="Export to CSV", command=self.export_csv, width=200).pack(anchor="w", padx=20, pady=(10, 20))
+        
+        cloud_panel = ctk.CTkFrame(rep_frame, corner_radius=10)
+        cloud_panel.pack(fill="x", padx=20, pady=10)
+        ctk.CTkLabel(cloud_panel, text="Google Sheets Integration", font=("Arial", 16, "bold")).pack(anchor="w", padx=20, pady=(20, 5))
+        
+        if hasattr(self, 'cloud_sync') and self.cloud_sync.is_configured:
+            ctk.CTkLabel(cloud_panel, text="Status: Active & Connected to 'BioSync_Attendance_Log'", text_color="green").pack(anchor="w", padx=20, pady=(0, 15))
+            ctk.CTkButton(cloud_panel, text="Force Cloud Sync", state="normal", width=200).pack(anchor="w", padx=20, pady=(10, 20))
+        else:
+            ctk.CTkLabel(cloud_panel, text="Status: Not Configured (Missing credentials.json)", text_color="orange").pack(anchor="w", padx=20, pady=(0, 15))
+            ctk.CTkButton(cloud_panel, text="Force Cloud Sync", state="disabled", width=200).pack(anchor="w", padx=20, pady=(10, 20))
         
         # Default view
         self.select_frame("Dashboard")
@@ -396,8 +462,73 @@ class AttendanceApp(ctk.CTk):
             for item in selected:
                 values = self.emp_tree.item(item, "values")
                 emp_id = values[0]
+                
+                # Fetch employee data to get finger ID
+                df = self.db.load_employees()
+                match = df[df["emp_id"] == str(emp_id)]
+                if not match.empty:
+                    emp_data = match.iloc[0].to_dict()
+                    # Delete from hardware if connected
+                    finger_id_val = emp_data.get('finger_id')
+                    if finger_id_val is not None and str(finger_id_val).strip() != "" and str(finger_id_val) != "nan" and getattr(self, 'esp32_ip', None):
+                        try:
+                            finger_id = int(float(finger_id_val)) # Handle float strings from pandas
+                            del_res = requests.get(f"http://{self.esp32_ip}/delete_finger?id={finger_id}", timeout=5)
+                            if del_res.status_code != 200:
+                                print(f"[DEBUG] Hardware delete warning: {del_res.text}")
+                        except Exception as e:
+                            print(f"[DEBUG] Hardware delete error: {e}")
+
                 self.db.hard_delete_employee(emp_id)
             self.load_employee_table()
+
+    def load_attendance_table(self):
+        for row in self.att_tree.get_children():
+            self.att_tree.delete(row)
+            
+        try:
+            df = self.db.load_attendance()
+            # Sort chronologically first to calculate hours
+            df = df.sort_values(by=["date", "time"], ascending=[True, True])
+            
+            # Calculate hours
+            display_data = []
+            check_ins = {}
+            for _, row in df.iterrows():
+                hours_str = "--"
+                emp_id = row["emp_id"]
+                if row["punch_type"] == "Check-In":
+                    check_ins[emp_id] = datetime.strptime(f'{row["date"]} {row["time"]}', "%Y-%m-%d %H:%M:%S")
+                elif row["punch_type"] == "Check-Out" and emp_id in check_ins:
+                    checkout_time = datetime.strptime(f'{row["date"]} {row["time"]}', "%Y-%m-%d %H:%M:%S")
+                    diff = checkout_time - check_ins[emp_id]
+                    hours = diff.total_seconds() / 3600.0
+                    hours_str = f"{hours:.2f} hrs"
+                    del check_ins[emp_id] # Reset
+                    
+                display_data.append((
+                    row["date"], row["time"], row["emp_id"], 
+                    row["full_name"], row["department"], 
+                    row["punch_type"], row["status"], hours_str
+                ))
+                
+            # Reverse display_data to show most recent first
+            display_data.reverse()
+            
+            for row in display_data:
+                self.att_tree.insert("", "end", values=row)
+        except Exception as e:
+            print(f"[ERROR] Failed to load attendance table: {e}")
+
+    def export_csv(self):
+        import shutil
+        save_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV Files", "*.csv")], title="Export Attendance Logs")
+        if save_path:
+            try:
+                shutil.copy("attendance.csv", save_path)
+                messagebox.showinfo("Success", f"Attendance logs exported successfully to:\n{save_path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export CSV: {e}")
 
     def open_enrollment_wizard(self):
         EnrollmentModal(self)
@@ -472,16 +603,63 @@ class AttendanceApp(ctk.CTk):
         self.update_top_bar(f"Device: ESP32 @ {self.esp32_ip}", "🟢")
         self.log_feed(f"Manual connection overridden to {ip}")
         print(f"[DEBUG] Triggering offline sync for {ip}...")
+        threading.Thread(target=self._sync_hardware_clock, daemon=True).start()
         threading.Thread(target=self.sync_offline_data, daemon=True).start()
         # Start poll loop if not already polling
         if not getattr(self, '_is_polling', False):
             print("[DEBUG] Starting background polling thread...")
             threading.Thread(target=self.poll_esp32, daemon=True).start()
 
+    def format_sensor_memory(self):
+        if not self.esp32_ip:
+            messagebox.showerror("Error", "ESP32 is not connected!")
+            return
+            
+        if messagebox.askyesno("DANGER", "Are you absolutely sure you want to WIPE the ESP32 hardware memory?\n\nThis will instantly delete ALL registered fingerprints. Employee data will remain in Python, but you will have to re-enroll every single person's finger!"):
+            try:
+                res = requests.get(f"http://{self.esp32_ip}/clear_sensor", timeout=10)
+                if res.status_code == 200:
+                    messagebox.showinfo("Success", "Sensor memory wiped completely. Please re-enroll all employees.")
+                else:
+                    messagebox.showerror("Error", f"Failed to wipe sensor: {res.text}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not reach device to wipe memory: {e}")
+
+    def change_admin_pin(self):
+        new_pin = self.new_pin_entry.get().strip()
+        if not new_pin or len(new_pin) < 4:
+            messagebox.showerror("Error", "PIN must be at least 4 characters long.")
+            return
+            
+        import configparser
+        config = configparser.ConfigParser()
+        config_path = os.path.join(os.path.dirname(__file__), 'config.ini')
+        if os.path.exists(config_path):
+            config.read(config_path)
+            
+        if 'Security' not in config:
+            config['Security'] = {}
+            
+        config['Security']['ADMIN_PIN'] = new_pin
+        with open(config_path, 'w') as f:
+            config.write(f)
+            
+        messagebox.showinfo("Success", "Admin PIN updated successfully! It will take effect on next launch.")
+        self.new_pin_entry.delete(0, 'end')
+
     def log_feed(self, message):
         self.feed_box.configure(state="normal")
         self.feed_box.insert("1.0", message + "\n") # Insert at the top of the list
         self.feed_box.configure(state="disabled")
+
+    def _sync_hardware_clock(self):
+        try:
+            now = datetime.now()
+            url = f"http://{self.esp32_ip}/sync_time?y={now.year}&m={now.month}&d={now.day}&h={now.hour}&min={now.minute}&s={now.second}"
+            requests.get(url, timeout=3)
+            print("[DEBUG] ESP32 RTC synchronized with PC time.")
+        except Exception as e:
+            print(f"[DEBUG] Failed to sync RTC: {e}")
 
     def init_discovery(self):
         if getattr(self, '_manual_override', False):
@@ -492,6 +670,9 @@ class AttendanceApp(ctk.CTk):
             if getattr(self, '_manual_override', False): return
             self.esp32_ip = ip
             self.after(0, self.update_top_bar, f"Device: ESP32 @ {self.esp32_ip}", "🟢")
+            
+            # Synchronize the hardware RTC time
+            threading.Thread(target=self._sync_hardware_clock, daemon=True).start()
             
             # Immediately trigger offline sync on connection
             threading.Thread(target=self.sync_offline_data, daemon=True).start()
@@ -525,16 +706,45 @@ class AttendanceApp(ctk.CTk):
                         # Lookup Employee Name
                         emp = self.db.get_employee_by_finger_id(uid)
                         if emp:
-                            name = emp['full_name']
-                            self.after(0, self.log_feed, f"[{timestamp}] [OFFLINE SYNC] {name} | ✅ Logged")
+                            # Split timestamp into date and time
+                            date_part = timestamp.split(" ")[0] if " " in timestamp else datetime.now().strftime("%Y-%m-%d")
+                            
+                            today_logs = self.db.load_attendance()
+                            emp_today = today_logs[(today_logs["emp_id"] == emp["emp_id"]) & (today_logs["date"] == date_part)]
+                            
+                            if len(emp_today) % 2 == 0:
+                                punch_type = "Check-In"
+                                status = "On-Time"
+                                icon = "🟢"
+                            else:
+                                punch_type = "Check-Out"
+                                status = "Completed"
+                                icon = "🔵"
+                                
+                            # Save to CSV Database
+                            new_punch = self.db.log_punch(emp["emp_id"], emp["full_name"], emp["department"], punch_type, status, confidence=98, override_datetime=timestamp)
+                            
+                            # Phase 5: Cloud Sync
+                            punch_data = [
+                                new_punch["date"], new_punch["time"], new_punch["emp_id"], 
+                                new_punch["full_name"], new_punch["department"], 
+                                new_punch["punch_type"], new_punch["status"], new_punch["confidence"]
+                            ]
+                            self.cloud_sync.sync_punch_async(punch_data)
+                            
+                            self.after(0, self.log_feed, f"[{timestamp}] [OFFLINE] {emp['full_name']} | {icon} {punch_type} ({status})")
                         else:
-                            self.after(0, self.log_feed, f"[{timestamp}] [OFFLINE SYNC] Unknown ID {uid} | 🔴 Unknown")
-        except Exception:
-            pass
+                            self.after(0, self.log_feed, f"[{timestamp}] [OFFLINE] Unknown ID {uid} | 🔴 Unregistered")
+                
+                # Refresh table to show new offline syncs
+                self.after(0, self.load_attendance_table)
+        except Exception as e:
+            print(f"[DEBUG] Offline sync failed: {e}")
 
     def poll_esp32(self):
         self._is_polling = True
         print("[DEBUG] Polling thread started.")
+        fail_count = 0
         while self.is_running:
             if getattr(self, '_pause_polling', False):
                 time.sleep(1)
@@ -543,18 +753,19 @@ class AttendanceApp(ctk.CTk):
             try:
                 # 1. Update Status Bar
                 status_url = f"http://{self.esp32_ip}/status"
-                status_resp = requests.get(status_url, timeout=2)
+                status_resp = requests.get(status_url, timeout=3)
                 if status_resp.status_code == 200:
                     data = status_resp.json()
                     rssi = data.get('rssi', '--')
                     rtc_time = data.get('time', '--:--:--').split('T')[-1]
                     self.after(0, self.update_top_bar, f"Device: Connected @ {self.esp32_ip}", "🟢", rssi, rtc_time)
+                    fail_count = 0 # Reset fail count on success
                 else:
                     print(f"[DEBUG] Status endpoint returned: {status_resp.status_code}")
                 
                 # 2. Check for new punches
                 poll_url = f"http://{self.esp32_ip}/poll"
-                poll_resp = requests.get(poll_url, timeout=2)
+                poll_resp = requests.get(poll_url, timeout=3)
                 if poll_resp.status_code == 200:
                     encrypted_b64 = poll_resp.text.strip()
                     if encrypted_b64:
@@ -566,20 +777,45 @@ class AttendanceApp(ctk.CTk):
                             # Lookup Employee Name
                             emp = self.db.get_employee_by_finger_id(uid)
                             if emp:
-                                name = emp['full_name']
-                                dept = emp['department']
-                                msg = f"[{timestamp}] {name} ({dept}) | 🟢 On-Time"
-                            else:
-                                msg = f"[{timestamp}] Unknown ID {uid} | 🔴 Unknown"
+                                today_logs = self.db.load_attendance()
+                                emp_today = today_logs[(today_logs["emp_id"] == emp["emp_id"]) & (today_logs["date"] == datetime.now().strftime("%Y-%m-%d"))]
                                 
-                            self.after(0, self.log_feed, msg)
+                                if len(emp_today) % 2 == 0:
+                                    punch_type = "Check-In"
+                                    status = "On-Time"
+                                    icon = "🟢"
+                                else:
+                                    punch_type = "Check-Out"
+                                    status = "Completed"
+                                    icon = "🔵"
+                                    
+                                # Save to CSV Database
+                                new_punch = self.db.log_punch(emp["emp_id"], emp["full_name"], emp["department"], punch_type, status, confidence=98)
+                                
+                                # Phase 5: Cloud Sync
+                                punch_data = [
+                                    new_punch["date"], new_punch["time"], new_punch["emp_id"], 
+                                    new_punch["full_name"], new_punch["department"], 
+                                    new_punch["punch_type"], new_punch["status"], new_punch["confidence"]
+                                ]
+                                self.cloud_sync.sync_punch_async(punch_data)
+                                
+                                self.after(0, self.log_feed, f"[{timestamp}] [LIVE] {emp['full_name']} | {icon} {punch_type} ({status})")
+                                self.after(0, self.load_attendance_table)
+                            else:
+                                msg = f"[{timestamp}] Unknown Finger ID {uid} | 🔴 Unregistered"
+                                self.after(0, self.log_feed, msg)
                             print(f"[DEBUG] Logged punch for ID {uid}")
             except requests.exceptions.RequestException as e:
                 print(f"[ERROR] Failed to communicate with ESP32: {e}")
-                self.after(0, self.update_top_bar, "Device: Disconnected", "🔴")
-            
-            # Non-blocking 1-second delay
-            time.sleep(1)
+                self.after(0, self.update_top_bar, f"Device: Disconnected", "🔴")
+                fail_count += 1
+                if fail_count > 5:
+                    print("[DEBUG] Connection lost. Triggering auto-discovery...")
+                    self._is_polling = False
+                    threading.Thread(target=self.init_discovery, daemon=True).start()
+                    break # Exit this poll loop, discovery will start a new one
+            time.sleep(1) # Crucial: Don't spam the ESP32 server
 
 if __name__ == "__main__":
     app = AttendanceApp()
